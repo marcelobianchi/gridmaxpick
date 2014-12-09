@@ -21,6 +21,44 @@ typedef struct picks {
 	float *y;
 } PICKS;
 
+/*
+ * Coordinate transformation functions
+ */
+inline int ij2index(GRID *g, int i, int j) {
+	int ll  = j*g->nx + i;
+	fprintf(stderr,"%d / %d\n", ll, g->nx * g->ny);
+	return ll;
+}
+
+inline void index2ij(GRID *g, int i, int j, int *index) {
+	return;
+}
+
+inline int ij2xy(GRID *g, int i, int j, float *x, float *y) {
+	int isg = (i >= 0 && i < g->nx && j >= 0 && j < g->ny) ? 0 : 1;
+
+	*x = g->xmin + (i * g->dx);
+	*y = g->ymin + (j * g->dy);
+
+	return isg;
+}
+
+inline int xy2ij(GRID *g, float x, float y, int *i, int *j, int upper) {
+	int isg;
+
+	float xoffset = (x < (g->xmin)) ? -0.5 : 0.5;
+	float yoffset = (y < (g->ymin)) ? -0.5 : 0.5;
+
+	*i = ((x - g->xmin) / g->dx + xoffset);
+	*j = ((y - g->ymin) / g->dy + yoffset);
+
+	isg = (*i >= 0 && *i < g->nx && *j >= 0 && *j < g->ny) ? 0 : 1;
+
+	return isg;
+}
+
+
+
 void order(float *x1, float *x2) {
 	if (*x1 > *x2) {
 		float aux = *x1;
@@ -56,7 +94,7 @@ void plot(GRID *data, PICKS **p, int np, int cp, AREA *pane) {
 
 	cpgenv(pane->xmin, pane->xmax, pane->ymin, pane->ymax, 0, 0);
 
-	cpggray(data->values, data->nx, data->ny, 1 ,data->nx, 1, data->ny, 1,0, tr);
+	cpggray(data->values, data->nx, data->ny, 1 ,data->nx, 1, data->ny, 1, -1, tr);
 
 	for(i=0; i < np; i++) {
 		if (cp == i)
@@ -190,6 +228,17 @@ int control(GRID *data) {
 		// Add pick area (Left-mouse)
 		case 'A': {
 			float axx, ayy;
+			int ii,jj;
+			int ie, je;
+
+			ie = xy2ij(data,ax,ay,&ii,&jj,0);
+			je = ij2xy(data,ii,jj,&axx,&ayy);
+
+			float val = (ie == 1) ? -999 : data->values[ij2index(data, ii,jj)];
+			fprintf(stderr,"(%f) -> %d [%d]-> (%f) (%f) -> %d [%d]-> (%f) = %f\n",ax,ii,ie,axx,ay,jj,je,ayy,val);
+
+			break;
+
 			axx = ax;
 			ayy = ay;
 
