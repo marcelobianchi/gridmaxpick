@@ -17,20 +17,78 @@ typedef struct grid {
 
 typedef struct picks {
 	int n;
+	int *i;
+	int *j;
 	float *x;
 	float *y;
 } PICKS;
+
+#define NONE 0
+#define GOBYROW 1
+#define GOBYCOL 1
+
+/*
+ * Pix handling
+ */
+void pickadd(PICKS *p, float ax, float ay, int im, int jm, int replacemode) {
+	int i, it = -1;
+
+	if (replacemode == GOBYROW) {
+		for(i = 0; i < p->n; i++)
+			if (p->i[i] == im) {
+				it = i;
+				break;
+			}
+	} else if (replacemode == GOBYCOL) {
+		for(i = 0; i < p->n; i++)
+			if (p->j[i] == jm) {
+				it = i;
+				break;
+			}
+	}
+
+	if (it == -1) {
+		p->n = p->n + 1;
+		p->x = realloc(p->x, sizeof(float) * p->n);
+		p->y = realloc(p->y, sizeof(float) * p->n);
+		p->i = realloc(p->i, sizeof(int) * p->n);
+		p->j = realloc(p->j, sizeof(int) * p->n);
+		it = p->n - 1;
+	}
+
+	p->x[it] = ax;
+	p->y[it] = ay;
+	p->i[it] = im;
+	p->j[it] = jm;
+
+	return;
+}
+
+PICKS *newpick() {
+	PICKS *p = malloc(sizeof(PICKS));
+	p->n = 0;
+
+	p->x = NULL;
+	p->y = NULL;
+	p->i = NULL;
+	p->j = NULL;
+
+	return p;
+}
 
 /*
  * Coordinate transformation functions
  */
 inline int ij2index(GRID *g, int i, int j) {
 	int ll  = j*g->nx + i;
-	fprintf(stderr,"%d / %d\n", ll, g->nx * g->ny);
+//	fprintf(stderr,"%d / %d\n", ll, g->nx * g->ny);
 	return ll;
 }
 
-inline void index2ij(GRID *g, int i, int j, int *index) {
+inline void index2ij(GRID *g, int index, int *i, int *j) {
+	*j = index / g->nx;
+	*i = index - *j * g->nx;
+//	fprintf(stderr,"%d %d %d\n",index, *i, *j);
 	return;
 }
 
@@ -43,7 +101,7 @@ inline int ij2xy(GRID *g, int i, int j, float *x, float *y) {
 	return isg;
 }
 
-inline int xy2ij(GRID *g, float x, float y, int *i, int *j, int upper) {
+inline int xy2ij(GRID *g, float x, float y, int *i, int *j, int limit) {
 	int isg;
 
 	float xoffset = (x < (g->xmin)) ? -0.5 : 0.5;
@@ -52,13 +110,22 @@ inline int xy2ij(GRID *g, float x, float y, int *i, int *j, int upper) {
 	*i = ((x - g->xmin) / g->dx + xoffset);
 	*j = ((y - g->ymin) / g->dy + yoffset);
 
+	if (limit) {
+		if (*i < 0 ) *i = 0;
+		if (*i >= g->nx) *i = (g->nx-1);
+
+		if (*j < 0 ) *j = 0;
+		if (*j >= g->ny) *j = (g->ny-1);
+	}
+
 	isg = (*i >= 0 && *i < g->nx && *j >= 0 && *j < g->ny) ? 0 : 1;
 
 	return isg;
 }
 
-
-
+/*
+ * Tools
+ */
 void order(float *x1, float *x2) {
 	if (*x1 > *x2) {
 		float aux = *x1;
@@ -68,6 +135,9 @@ void order(float *x1, float *x2) {
 	return;
 }
 
+/*
+ * Operation
+ */
 float *load(char *filename, float *xmin, float *xmax, float *dx, int *nx, float *ymin, float *ymax, float *dy, int *ny) {
 	FILE *ent;
 	ent = fopen(filename, "r");
@@ -96,14 +166,50 @@ void plot(GRID *data, PICKS **p, int np, int cp, AREA *pane) {
 
 	cpggray(data->values, data->nx, data->ny, 1 ,data->nx, 1, data->ny, 1, -1, tr);
 
+	cpgsci(2);
 	for(i=0; i < np; i++) {
-		if (cp == i)
-			continue;
-		cpgline(p[i]->n, p[i]->x, p[i]->y);
+		fprintf(stderr,"Plotting picks %d of %d points\n",i,p[i]->n);
+		if (i == cp)
+			cpgpt(p[i]->n, p[i]->x, p[i]->y,2);
+		else
+			cpgline(p[i]->n, p[i]->x, p[i]->y);
 	}
+	cpgsci(1);
+}
+
+int pickrow(GRID *data, int i, int js, int je) {
+	int j, index;
+	int maxindex = ij2index(data, i, js);
+	float max = data->values[maxindex];
+
+	for(j=js+1; j<=je; j++) {
+		index = ij2index(data, i, j);
+		if (data->values[index] > max) {
+			max = data->values[index];
+			maxindex = index;
+		}
+	}
+
+	return maxindex;
 }
 
 void boxpick(GRID *data, PICKS *p, AREA *box) {
+	int is,js,ie,je;
+	int i;
+
+	xy2ij(data,box->xmin, box->ymin, &is, &js, 1);
+	xy2ij(data,box->xmax, box->ymax, &ie, &je, 1);
+
+	for(i = is; i <= ie; i++) {
+		float ax, ay;
+		int im, jm;
+		int pick;
+		pick = pickrow(data, i, js, je);
+		index2ij(data, pick, &im, &jm);
+		ij2xy(data, im, jm, &ax, &ay);
+		pickadd(p, ax, ay, im, jm, GOBYROW);
+	}
+
 	return;
 }
 
@@ -127,9 +233,10 @@ int control(GRID *data) {
 	cpgopen("/XWINDOW");
 	cpgask((0));
 	picks =   malloc(sizeof(PICKS *) * 1);
-	picks[0] = malloc(sizeof(PICKS) * 1);
+	picks[0] = newpick();
 	np = 1; cp = 0;
 
+	// Reset all grid area
 	panearea.xmin = data->xmin - data->dx;
 	panearea.xmax = data->xmax + data->dx;
 	panearea.ymin = data->ymin - data->dy;
@@ -184,8 +291,8 @@ int control(GRID *data) {
 			if (cp == (np - 1)) {
 				np++;
 				cp = np -1;
-				picks =    realloc(picks, sizeof(PICKS *) * np);
-				picks[cp] = malloc(sizeof(PICKS) * 1);
+				picks = realloc(picks, sizeof(PICKS *) * np);
+				picks[cp] = newpick();
 			} else
 				cp++;
 			break;
@@ -202,10 +309,6 @@ int control(GRID *data) {
 		 * Picking commands
 		 */
 
-		// One pick
-		case 'P':
-			break;
-
 		// Delete pick area
 		case 'D': {
 			float axx, ayy;
@@ -215,6 +318,9 @@ int control(GRID *data) {
 			cpgsci(3);
 			getonechar(&ax, &ay, 1, 1);
 			cpgsci(1);
+
+			order(&ax,&axx);
+			order(&ay,&ayy);
 
 			pickarea.xmin = ax;
 			pickarea.xmax = axx;
@@ -228,23 +334,15 @@ int control(GRID *data) {
 		// Add pick area (Left-mouse)
 		case 'A': {
 			float axx, ayy;
-			int ii,jj;
-			int ie, je;
-
-			ie = xy2ij(data,ax,ay,&ii,&jj,0);
-			je = ij2xy(data,ii,jj,&axx,&ayy);
-
-			float val = (ie == 1) ? -999 : data->values[ij2index(data, ii,jj)];
-			fprintf(stderr,"(%f) -> %d [%d]-> (%f) (%f) -> %d [%d]-> (%f) = %f\n",ax,ii,ie,axx,ay,jj,je,ayy,val);
-
-			break;
-
 			axx = ax;
 			ayy = ay;
 
 			cpgsci(3);
 			getonechar(&ax, &ay, 1, 1);
 			cpgsci(1);
+
+			order(&ax,&axx);
+			order(&ay,&ayy);
 
 			pickarea.xmin = ax;
 			pickarea.xmax = axx;
@@ -277,9 +375,5 @@ int main(void)
 	GRID data;
 
 	data.values = load("_D", &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
-
-//	fprintf(stderr,"X: %f %f %f %d\n",data.xmin,data.xmax,data.dx,data.nx);
-//	fprintf(stderr,"Y: %f %f %f %d\n",data.ymin,data.ymax,data.dy,data.ny);
-
 	return control(&data);
 }
