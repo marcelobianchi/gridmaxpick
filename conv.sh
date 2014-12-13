@@ -26,4 +26,4 @@ grd2xyz -ZBLa ${tmp} >> ${outf}
 echo "DONE, file is ${outf}"
 
 # CLEAN UP
-rm -f ${tmp}
+rm -f ${tmp} .gmtcommands4
