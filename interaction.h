@@ -29,12 +29,12 @@
 
 
 /* Interaction */
-extern char message[2048];
+extern char interaction_message[2048];
 
 void alert(int level);
 float lerfloat(char *text);
 void lerchar(char *text, char *output, int max);
 int lerint(char *text);
-int getmouse(int a, int b, int c, int d, char *message);
+int getmouse(int a, int b, int c, int d, char *interaction_message);
 char getonechar(float *axx, float *ayy, int hook, int upper);
 int yesno(char *text);

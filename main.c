@@ -1,7 +1,14 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 #include "interaction.h"
+
+#define DEBUG   0    // Enable debuging
+#define MAXNP  16    // Max number of pickset allowed
+#define NONE    0    // Picking mode (in the future), NONE
+#define GOBYROW 1    // pick ROW wise
+#define GOBYCOL 1    // pick COL wise
 
 typedef struct area {
 	float xmin, xmax, ymin,ymax;
@@ -23,20 +30,42 @@ typedef struct picks {
 	float *y;
 } PICKS;
 
-#define NONE 0
-#define GOBYROW 1
-#define GOBYCOL 1
+void status(char *message) {
+	cpgsci(2);
+	cpgsch(0.75);
+	cpgmtxt("B",4.5, 0.5, 0.5, message);
+	cpgsci(1);
+	cpgsch(1.0);
+}
 
 /*
  * Pix handling
  */
 void pickadd(PICKS *p, float ax, float ay, int im, int jm, int replacemode) {
 	int i, it = -1;
+	int insert;
+
+	/*
+	 * Append
+	 */
+	it = p->n;
+	insert = 1;
 
 	if (replacemode == GOBYROW) {
 		for(i = 0; i < p->n; i++)
 			if (p->i[i] == im) {
+				/*
+				 * Replace
+				 */
 				it = i;
+				insert = 0;
+				break;
+			} else if (p->i[i] > im) {
+				/*
+				 * Insert in the middle
+				 */
+				it = i;
+				insert = 1;
 				break;
 			}
 	} else if (replacemode == GOBYCOL) {
@@ -44,16 +73,29 @@ void pickadd(PICKS *p, float ax, float ay, int im, int jm, int replacemode) {
 			if (p->j[i] == jm) {
 				it = i;
 				break;
+			} else if (p->j[i] > jm) {
+				it = i;
+				insert = 1;
+				break;
 			}
 	}
 
-	if (it == -1) {
+	if (insert) {
 		p->n = p->n + 1;
 		p->x = realloc(p->x, sizeof(float) * p->n);
 		p->y = realloc(p->y, sizeof(float) * p->n);
 		p->i = realloc(p->i, sizeof(int) * p->n);
 		p->j = realloc(p->j, sizeof(int) * p->n);
-		it = p->n - 1;
+
+		int amount = p->n - it -1;
+		if (amount > 0) {
+			memcpy(&p->i[it+1], &p->i[it], sizeof(int) * amount);
+			memcpy(&p->j[it+1], &p->j[it], sizeof(int) * amount);
+			memcpy(&p->x[it+1], &p->x[it], sizeof(float) * amount);
+			memcpy(&p->y[it+1], &p->y[it], sizeof(float) * amount);
+		}
+
+		if (DEBUG) fprintf(stderr,"Insert (it=%d n=%d amount=(%d)%d\n",it, p->n-1, p->n, amount);
 	}
 
 	p->x[it] = ax;
@@ -81,14 +123,14 @@ PICKS *newpick() {
  */
 inline int ij2index(GRID *g, int i, int j) {
 	int ll  = j*g->nx + i;
-//	fprintf(stderr,"%d / %d\n", ll, g->nx * g->ny);
+	if (DEBUG) fprintf(stderr,"%d / %d\n", ll, g->nx * g->ny);
 	return ll;
 }
 
 inline void index2ij(GRID *g, int index, int *i, int *j) {
 	*j = index / g->nx;
 	*i = index - *j * g->nx;
-//	fprintf(stderr,"%d %d %d\n",index, *i, *j);
+	if (DEBUG) fprintf(stderr,"%d %d %d\n",index, *i, *j);
 	return;
 }
 
@@ -140,25 +182,33 @@ void order(float *x1, float *x2) {
  */
 float *load(char *filename, float *xmin, float *xmax, float *dx, int *nx, float *ymin, float *ymax, float *dy, int *ny) {
 	FILE *ent;
-	ent = fopen(filename, "r");
 	float *data;
 	int i;
+
+	ent = fopen(filename, "r");
+	if (ent == NULL) {
+		sprintf(interaction_message, "File %s cannot be open.", filename);
+		alert(1);
+
+		return NULL;
+	}
 
 	fscanf(ent, "%f %f %f %d", xmin, xmax, dx, nx);
 	fscanf(ent, "%f %f %f %d", ymin, ymax, dy, ny);
 
 	int size = (*nx) * (*ny);
 	data = malloc( sizeof(float) * (size));
-	for(i=0;i<(size);i++) {
+	for(i=0;i<(size);i++)
 		fscanf(ent, "%f", &data[i]);
-	}
 	fclose(ent);
+
 	return data;
 }
 
 void plot(GRID *data, PICKS **p, int np, int cp, AREA *pane) {
 	int i;
 	float tr[6] = { data->xmin - data->dx, data->dx, 0, data->ymin - data->dy, 0, data->dy };
+	char message[1024];
 
 	cpgeras();
 
@@ -166,15 +216,70 @@ void plot(GRID *data, PICKS **p, int np, int cp, AREA *pane) {
 
 	cpggray(data->values, data->nx, data->ny, 1 ,data->nx, 1, data->ny, 1, -1, tr);
 
+	strcpy(message,"Picks: ");
 	cpgsci(2);
 	for(i=0; i < np; i++) {
-		fprintf(stderr,"Plotting picks %d of %d points\n",i,p[i]->n);
-		if (i == cp)
+		if (i == cp) {
 			cpgpt(p[i]->n, p[i]->x, p[i]->y,2);
-		else
+			sprintf(message,"%s [%03d]",message,i);
+		} else {
 			cpgline(p[i]->n, p[i]->x, p[i]->y);
+			sprintf(message,"%s  %03d ",message,i);
+		}
 	}
 	cpgsci(1);
+
+	cpgsch(1.3);
+	cpgmtxt("T",2.1, 0.5, 0.5, "GridPick Code");
+
+	cpgsch(0.8);
+	cpgmtxt("T", 1.1, 0.0, 0.0, message);
+	cpgsch(1.0);
+}
+
+void showhelp() {
+	float p, py;
+
+	cpgsch(0.75);
+
+	cpgsvp(0.45, 0.95, 0.05, 0.55);
+	cpgswin(0.0,1.0,0.0,1.0);
+	cpgrect(0.0,1.0,0.0,1.0);
+	cpgsci(0);
+	cpgrect(0.01,.99,0.01,0.99);
+	cpgsci(1);
+
+
+	py = 0.02;
+	cpgsci(5);
+	cpgsch(1.0);
+	p = -1.0; cpgmtxt("T", p, py, 0.0, "General Controls:");
+
+	cpgsci(1);
+	p -= 2.0; cpgmtxt("T", p, py, 0.0, "s - Save Picks");
+	p -= 1.0; cpgmtxt("T", p, py, 0.0, "h - Help Message");
+	p -= 1.0; cpgmtxt("T", p, py, 0.0, "q - Quit program");
+	p -= 1.0; cpgmtxt("T", p, py, 0.0, "x - Zoom In/Out (right mouse)");
+
+	cpgsci(5);
+	p -= 2.0; cpgmtxt("T", p, py, 0.0, "Pick Set Control:");
+
+	cpgsci(1);
+	p -= 2.0; cpgmtxt("T", p, py, 0.0, ", - Previous PickSet");
+	p -= 1.0; cpgmtxt("T", p, py, 0.0, ". - Next PickSet / Add PickSet");
+	p -= 1.0; cpgmtxt("T", p, py, 0.0, "d - Auto Delete pick points by region");
+	p -= 1.0; cpgmtxt("T", p, py, 0.0, "a - Auto Add pick points by region (left mouse)");
+
+
+	p -= 2.0; cpgmtxt("T", p, py, 0.0, "  --  Any Key to close this help message !");
+	getonechar(NULL, NULL, 0, 0);
+	/*
+	 * Reset to return
+	 */
+	cpgsch(1.0);
+	cpgsci(1);
+
+	return;
 }
 
 int pickrow(GRID *data, int i, int js, int je) {
@@ -197,6 +302,9 @@ void boxpick(GRID *data, PICKS *p, AREA *box) {
 	int is,js,ie,je;
 	int i;
 
+	/*
+	 * Convert picks to grid index
+	 */
 	xy2ij(data,box->xmin, box->ymin, &is, &js, 1);
 	xy2ij(data,box->xmax, box->ymax, &ie, &je, 1);
 
@@ -214,40 +322,149 @@ void boxpick(GRID *data, PICKS *p, AREA *box) {
 }
 
 void boxunpick(GRID *data, PICKS *p, AREA *box) {
+	int is,js,ie,je;
+	int amount, moveamount;
+	int from, to;
+
+	/*
+	 * Convert picks to grid index
+	 */
+	xy2ij(data,box->xmin, box->ymin, &is, &js, 1);
+	xy2ij(data,box->xmax, box->ymax, &ie, &je, 1);
+
+	/*
+	 * Find cut start in pick vector index
+	 */
+	for(from = 0; from < p->n; from++)
+		if (p->i[from] >= is) break;
+
+	/*
+	 * Find cut end in pick vector index
+	 */
+	for(to=from; to < p->n; to++)
+		if (p->i[to] > ie) break;
+	to--;
+
+	/*
+	 * Compute cut amount
+	 */
+	amount = to - from + 1;
+
+	/*
+	 * Comput move amount
+	 */
+	moveamount = p->n - to - 1;
+
+	/*
+	 * Cut if necessary
+	 */
+	if (to >= from) {
+
+		/*
+		 * Move if necessary
+		 */
+		if (moveamount > 0) {
+			memmove(&p->i[from], &p->i[to+1], sizeof(int) * (moveamount));
+			memmove(&p->j[from], &p->j[to+1], sizeof(int) * (moveamount));
+			memmove(&p->x[from], &p->x[to+1], sizeof(float) * (moveamount));
+			memmove(&p->y[from], &p->y[to+1], sizeof(float) * (moveamount));
+		}
+
+		/*
+		 * Real pick vectors cut
+		 */
+		p->n = p->n - amount;
+		p->x = realloc(p->x, sizeof(float) * p->n);
+		p->y = realloc(p->y, sizeof(float) * p->n);
+		p->i = realloc(p->i, sizeof(int) * p->n);
+		p->j = realloc(p->j, sizeof(int) * p->n);
+
+		/*
+		 * Do we want report ?
+		 */
+		if (DEBUG) fprintf(stderr,"Cutted pick from %d to %d amount %d rested %d movedamount %d\n",from, to, amount, p->n, moveamount);
+	}
+
 	return;
 }
 
-int control(GRID *data) {
+PICKS *loadpicks(char *filename, int *np, int *cp) {
+	return NULL;
+}
 
-	PICKS **picks = NULL;
-	int np = 0; // Number of picks
-	int cp = -1; // Current pick
-	AREA panearea;
-	AREA pickarea;
+int savepicks(char *filename, PICKS **p, int np, int cp) {
+	FILE *sai;
+	int i, j;
 
-	// Mouse interaction
-	float ax, ay;
-	char ch = 'A';
+	sai = fopen(filename,"w");
+	if (sai == NULL) {
+		sprintf(interaction_message, "Cannot write to file %s", filename);
+		alert(1);
+		return 1;
+	}
 
-	// Init
-	cpgopen("/XWINDOW");
-	cpgask((0));
+	for(i = 0; i < np; i++) {
+		fprintf(sai, "> %d %d %c\n",i, p[i]->n, (cp == i) ? 'S' : 'U');
+		for(j = 0; j < p[i]->n; j++)
+			fprintf(sai, "%f %f %d %d\n"
+					,p[i]->x[j]
+					,p[i]->y[j]
+					,p[i]->i[j]
+					,p[i]->j[j]);
+	}
+
+	fclose(sai);
+
+	return 0;
+}
+
+int control(char *gridfilename, char *pickfilename) {
+
+	GRID data;                       // Holds the grid data
+
+	PICKS **picks = NULL;            // Pickset storage area
+	int np = 0;                      // Number of picks
+	int cp = -1;                     // Current pick
+
+	AREA panearea;                   // Zoom area
+	AREA pickarea;                   // Area for picking/unpicks
+
+	int q_count;                     // quit hit count to quit without saving
+	int save_is_needed;              // Flag to indicate that pickset is not saved
+	char output_pick_filename[1024]; // When pickfilename is NULL
+
+	float ax, ay;                    // Mouse pick variable X, Y
+	char ch = ' ';                   // Mouse pick variable char
+
+	/*
+	 * Load grid file
+	 */
+	data.values = load(gridfilename, &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
+
+	/*
+	 * Init
+	 */
+	q_count = 0;
 	picks =   malloc(sizeof(PICKS *) * 1);
 	picks[0] = newpick();
 	np = 1; cp = 0;
+	save_is_needed = 1;
 
-	// Reset all grid area
-	panearea.xmin = data->xmin - data->dx;
-	panearea.xmax = data->xmax + data->dx;
-	panearea.ymin = data->ymin - data->dy;
-	panearea.ymax = data->ymax + data->dy;
+	/*
+	 * Reset all grid area
+	 */
+	panearea.xmin = data.xmin - data.dx;
+	panearea.xmax = data.xmax + data.dx;
+	panearea.ymin = data.ymin - data.dy;
+	panearea.ymax = data.ymax + data.dy;
 
 	while (ch != 'Q') {
 		/*
 		 * Pre switch
 		 */
-		plot(data, picks, np, cp, &panearea);
+		plot(&data, picks, np, cp, &panearea);
 		ch = getonechar(&ax, &ay, 0, 1);
+		if (ch != 'Q') q_count = 0;
 
 		switch(ch) {
 
@@ -261,11 +478,15 @@ int control(GRID *data) {
 			axx = ax;
 			ayy = ay;
 
+			status("Pick the second point to zoom");
 			cpgsci(2);
 			getonechar(&ax, &ay, 1, 1);
 			cpgsci(1);
 
 			if (ax != axx && ay != ayy) {
+				/*
+				 * Zoom in
+				 */
 				order(&ax,&axx);
 				order(&ay,&ayy);
 				panearea.xmin = ax;
@@ -273,11 +494,13 @@ int control(GRID *data) {
 				panearea.ymin = ay;
 				panearea.ymax = ayy;
 			} else {
-				// Reset zoom
-				panearea.xmin = data->xmin - data->dx;
-				panearea.xmax = data->xmax + data->dx;
-				panearea.ymin = data->ymin - data->dy;
-				panearea.ymax = data->ymax + data->dy;
+				/*
+				 * Reset zoom
+				 */
+				panearea.xmin = data.xmin - data.dx;
+				panearea.xmax = data.xmax + data.dx;
+				panearea.ymin = data.ymin - data.dy;
+				panearea.ymax = data.ymax + data.dy;
 			}
 			break;
 		}
@@ -289,10 +512,16 @@ int control(GRID *data) {
 		// Next segment
 		case '.': {
 			if (cp == (np - 1)) {
+				if (np == MAXNP) {
+					sprintf(interaction_message, "Cannot add more than %d picksets.", MAXNP);
+					alert(WARNING);
+					break;
+				}
 				np++;
 				cp = np -1;
 				picks = realloc(picks, sizeof(PICKS *) * np);
 				picks[cp] = newpick();
+				save_is_needed = 1;
 			} else
 				cp++;
 			break;
@@ -315,6 +544,7 @@ int control(GRID *data) {
 			axx = ax;
 			ayy = ay;
 
+			status("Pick the second point to define the delete area");
 			cpgsci(3);
 			getonechar(&ax, &ay, 1, 1);
 			cpgsci(1);
@@ -327,7 +557,9 @@ int control(GRID *data) {
 			pickarea.ymin = ay;
 			pickarea.ymax = ayy;
 
-			boxunpick(data, picks[cp], &pickarea);
+			boxunpick(&data, picks[cp], &pickarea);
+
+			save_is_needed = 1;
 			break;
 		}
 
@@ -337,6 +569,7 @@ int control(GRID *data) {
 			axx = ax;
 			ayy = ay;
 
+			status("Pick the second point to define the auto-pick area");
 			cpgsci(3);
 			getonechar(&ax, &ay, 1, 1);
 			cpgsci(1);
@@ -349,31 +582,75 @@ int control(GRID *data) {
 			pickarea.ymin = ay;
 			pickarea.ymax = ayy;
 
-			boxpick(data, picks[cp], &pickarea);
+			boxpick(&data, picks[cp], &pickarea);
+
+			save_is_needed = 1;
 			break;
 		}
 
 		/*
-		 * Quit, save
+		 * Quit, save, help
 		 */
 
-		// Save
-		case 'S':
+		// Help
+		case 'H': {
+			showhelp();
 			break;
+		}
+
+		// Save
+		case 'S': {
+			if (pickfilename == NULL) {
+				lerchar("Enter the filename for saving the picks:", output_pick_filename, 1024);
+				pickfilename = output_pick_filename;
+			}
+			save_is_needed = savepicks(pickfilename, picks, np, cp);
+			break;
+		}
 
 		// Quit
-		case 'Q':
+		case 'Q': {
+			if (q_count == 0 && save_is_needed == 1) {
+				strcpy(interaction_message, "Picksets are not saved, Q one more time to quit.");
+				alert(1);
+				ch = ' ';
+				q_count = 1;
+			}
 			break;
+		}
+
 		}
 	}
 
 	return 0;
 }
 
-int main(void)
-{
-	GRID data;
+int main(int argc, char **argv) {
+	char *gridfilename = NULL;
+	char *pickfilename = NULL;
 
-	data.values = load("_D", &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
-	return control(&data);
+	/*
+	 * Parse command line
+	 */
+	if (argc < 2) {
+		fprintf(stderr,"Invalid call, expected:\n%s <Grid> [pickfile]\n", argv[0]);
+		return 1;
+	}
+
+	/*
+	 * Init code
+	 */
+	cpgopen("/XWINDOW");
+	cpgask((0));
+
+	/*
+	 * Parse the command-line argument
+	 */
+	gridfilename = argv[1];
+	pickfilename = (argc > 2) ? argv[2] : NULL;
+
+	/*
+	 * Run the code
+	 */
+	return control(gridfilename, pickfilename);
 }
