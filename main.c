@@ -5,6 +5,10 @@
 #include "interaction.h"
 #include "colortable.h"
 
+#ifdef USEGMTGRD
+#include <gmt/gmt.h>
+#endif
+
 #define DEBUG   0    // Enable debuging
 #define MAXNP  16    // Max number of pickset allowed
 #define NONE    0    // Picking mode (in the future), NONE
@@ -183,8 +187,11 @@ inline void index2ij(GRID *g, int index, int *i, int *j) {
 inline int ij2xy(GRID *g, int i, int j, float *x, float *y) {
 	int isg = (i >= 0 && i < g->nx && j >= 0 && j < g->ny) ? 0 : 1;
 
-	*x = g->xmin + (i * g->dx);
-	*y = g->ymin + (j * g->dy);
+	if (x != NULL)
+		*x = g->xmin + (i * g->dx);
+
+	if (y != NULL)
+		*y = g->ymin + (j * g->dy);
 
 	return isg;
 }
@@ -192,21 +199,26 @@ inline int ij2xy(GRID *g, int i, int j, float *x, float *y) {
 inline int xy2ij(GRID *g, float x, float y, int *i, int *j, int limit) {
 	int isg;
 
+	int itemp, jtemp;
+
 	float xoffset = (x < (g->xmin)) ? -0.5 : 0.5;
 	float yoffset = (y < (g->ymin)) ? -0.5 : 0.5;
 
-	*i = ((x - g->xmin) / g->dx + xoffset);
-	*j = ((y - g->ymin) / g->dy + yoffset);
+	itemp = ((x - g->xmin) / g->dx + xoffset);
+	jtemp = ((y - g->ymin) / g->dy + yoffset);
 
 	if (limit) {
-		if (*i < 0 ) *i = 0;
-		if (*i >= g->nx) *i = (g->nx-1);
+		if (itemp < 0 ) itemp = 0;
+		if (itemp >= g->nx) itemp = (g->nx-1);
 
-		if (*j < 0 ) *j = 0;
-		if (*j >= g->ny) *j = (g->ny-1);
+		if (jtemp < 0 ) jtemp = 0;
+		if (jtemp >= g->ny) jtemp = (g->ny-1);
 	}
 
-	isg = (*i >= 0 && *i < g->nx && *j >= 0 && *j < g->ny) ? 0 : 1;
+	isg = (itemp >= 0 && itemp < g->nx && jtemp >= 0 && jtemp < g->ny) ? 0 : 1;
+
+	if (i != NULL) *i = itemp;
+	if (j != NULL) *j = jtemp;
 
 	return isg;
 }
@@ -226,6 +238,45 @@ void order(float *x1, float *x2) {
 /*
  * Operation
  */
+
+#ifdef USEGMTGRD
+/*
+ * Load a GMT grid file directly using GMT libraries
+ */
+float *loadgrd(char *filename,
+			   float *xmin, float *xmax, float *dx, int *nx,
+			   float *ymin, float *ymax, float *dy, int *ny) {
+	struct GRD_HEADER grd;
+	float *a = NULL;
+	GMT_LONG nm;
+
+	if (DEBUG) fprintf(stderr,"Loading (GMT/GRD) file: %s\n", filename);
+
+	GMT_grd_init (&grd, 0, NULL, FALSE);
+	GMT_read_grd_info (filename, &grd);
+
+	*xmin = grd.x_min;
+	*xmax = grd.x_max;
+	*dx = grd.x_inc;
+	*nx = grd.nx;
+
+	*ymin = grd.y_min;
+	*ymax = grd.y_max;
+	*dy = grd.y_inc;
+	*ny = grd.ny;
+
+	if (DEBUG) fprintf(stderr,"xMin: %f xMax: %f dX: %f nX: %d\n", *xmin, *xmax, *dx, *nx);
+	if (DEBUG) fprintf(stderr,"yMin: %f yMax: %f dY: %f nY: %d\n", *ymin, *ymax, *dy, *ny);
+
+	nm = GMT_get_nm (grd.nx, grd.ny);
+	a = (float *) malloc (sizeof(float) * nm);
+	GMT_read_grd (filename, &grd, a, 0.0, 0.0, 0.0, 0.0, GMT_pad, FALSE);
+	if (DEBUG) fprintf(stderr,"Total of %ld data points\n", nm);
+
+	return a;
+}
+#endif
+
 float *load(char *filename, float *xmin, float *xmax, float *dx, int *nx, float *ymin, float *ymax, float *dy, int *ny) {
 	FILE *ent;
 	float *data;
@@ -465,7 +516,12 @@ int control(char *gridfilename, char *pickfilename) {
 	/*
 	 * Load grid file
 	 */
+#ifdef USEGMTGRD
+	data.values = loadgrd(gridfilename, &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
+#else
 	data.values = load(gridfilename, &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
+#endif
+
 
 	/*
 	 * Init
@@ -495,15 +551,15 @@ int control(char *gridfilename, char *pickfilename) {
 	cpgqcir(&cs, &ce);
 	if (DEBUG) fprintf(stderr,"cs: %d ce: %d\n",cs,ce);
 
-	cpgscir(cs, cs + n_colortable - 1);
+	cpgscir(cs, cs + n_seis_colortable - 1);
 	cpgqcir(&cs, &ce);
 	if (DEBUG) fprintf(stderr,"cs: %d ce: %d\n",cs,ce);
 
 	for(i = cs; i <= ce; i++) {
 
-		nr = colortable[i-cs][0] / 255.0;
-		ng = colortable[i-cs][1] / 255.0;
-		nb = colortable[i-cs][2] / 255.0;
+		nr = seis_colortable[i-cs][0] / 255.0;
+		ng = seis_colortable[i-cs][1] / 255.0;
+		nb = seis_colortable[i-cs][2] / 255.0;
 
 		cpgqcr(i, &r, &g, &b);
 		if (DEBUG) fprintf(stderr," %d %.2f %.2f %.2f -> %.2f %.2f %.2f\n", i, r, g, b, nr, ng, nb);
@@ -644,6 +700,7 @@ int control(char *gridfilename, char *pickfilename) {
 		case 'Y': {
 			int is, js;
 			xy2ij(&data, ax, ay, &is, &js, 1);
+			ij2xy(&data, is, js, &ax, NULL);
 			pickadd(picks[cp], ax, ay, is, js, GOBYROW);
 			break;
 		}
@@ -687,6 +744,10 @@ int control(char *gridfilename, char *pickfilename) {
 int main(int argc, char **argv) {
 	char *gridfilename = NULL;
 	char *pickfilename = NULL;
+
+#ifdef USEGMTGRD
+	argc = (int)GMT_begin (argc, argv);
+#endif
 
 	/*
 	 * Parse command line

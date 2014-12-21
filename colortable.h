@@ -1,4 +1,4 @@
-static int colortable[][3] = {
+static int seis_colortable[][3] = {
 	{ 0, 0, 205},
 	{ 0, 9, 210},
 	{ 0, 17, 216},
@@ -83,4 +83,4 @@ static int colortable[][3] = {
 	{ 188, 0, 0},
 	{ 179, 0, 0}
 };
-int n_colortable = 83;
+int n_seis_colortable = 83;

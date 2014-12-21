@@ -22,6 +22,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <cpgplot.h>
+#include <ctype.h>
+#include <math.h>
 
 #define WARNING 7
 #define ERROR 2
