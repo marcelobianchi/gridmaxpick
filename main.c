@@ -974,8 +974,12 @@ int main(int argc, char **argv) {
 		stop = 1;
 	}
 
-	if (stop) return 1;
-
+	if (stop) {
+		fprintf(stderr,"\n\nUsage:\n");
+		fprintf(stderr,"\ttestegrid [[-sa <Station Code 1>] [-sb <Station Code 2>] [-d <Distance>] || -p <PickFile> ] -g <GMT grid file>\n\n");
+		fprintf(stderr,"\t-sa,\n\t-sb,\n\t-d are only needed if option -p is not given, or is an non-existing file.\n\n");
+		return 1;
+	}
 #ifdef USEGMTGRD
 	/*
 	 * Initialize GMT library for use
