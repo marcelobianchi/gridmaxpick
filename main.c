@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "interaction.h"
+#include "colortable.h"
 
 #define DEBUG   0    // Enable debuging
 #define MAXNP  16    // Max number of pickset allowed
@@ -106,6 +107,51 @@ void pickadd(PICKS *p, float ax, float ay, int im, int jm, int replacemode) {
 	return;
 }
 
+void pickdel(PICKS *p, int from, int to) {
+	int amount;
+	int moveamount;
+
+	/*
+	 * Compute cut amount
+	 */
+	amount = to - from + 1;
+
+	/*
+	 * Comput move amount
+	 */
+	moveamount = p->n - to - 1;
+
+	/*
+	 * Cut if necessary
+	 */
+	if (to >= from) {
+
+		/*
+		 * Move if necessary
+		 */
+		if (moveamount > 0) {
+			memmove(&p->i[from], &p->i[to+1], sizeof(int) * (moveamount));
+			memmove(&p->j[from], &p->j[to+1], sizeof(int) * (moveamount));
+			memmove(&p->x[from], &p->x[to+1], sizeof(float) * (moveamount));
+			memmove(&p->y[from], &p->y[to+1], sizeof(float) * (moveamount));
+		}
+
+		/*
+		 * Real pick vectors cut
+		 */
+		p->n = p->n - amount;
+		p->x = realloc(p->x, sizeof(float) * p->n);
+		p->y = realloc(p->y, sizeof(float) * p->n);
+		p->i = realloc(p->i, sizeof(int) * p->n);
+		p->j = realloc(p->j, sizeof(int) * p->n);
+
+		/*
+		 * Do we want report ?
+		 */
+		if (DEBUG) fprintf(stderr,"Cutted pick from %d to %d amount %d rested %d movedamount %d\n",from, to, amount, p->n, moveamount);
+	}
+}
+
 PICKS *newpick() {
 	PICKS *p = malloc(sizeof(PICKS));
 	p->n = 0;
@@ -123,14 +169,14 @@ PICKS *newpick() {
  */
 inline int ij2index(GRID *g, int i, int j) {
 	int ll  = j*g->nx + i;
-	if (DEBUG) fprintf(stderr,"%d / %d\n", ll, g->nx * g->ny);
+	// fprintf(stderr,"%d / %d\n", ll, g->nx * g->ny);
 	return ll;
 }
 
 inline void index2ij(GRID *g, int index, int *i, int *j) {
 	*j = index / g->nx;
 	*i = index - *j * g->nx;
-	if (DEBUG) fprintf(stderr,"%d %d %d\n",index, *i, *j);
+	// fprintf(stderr,"%d %d %d\n",index, *i, *j);
 	return;
 }
 
@@ -214,10 +260,10 @@ void plot(GRID *data, PICKS **p, int np, int cp, AREA *pane) {
 
 	cpgenv(pane->xmin, pane->xmax, pane->ymin, pane->ymax, 0, 0);
 
-	cpggray(data->values, data->nx, data->ny, 1 ,data->nx, 1, data->ny, 1, -1, tr);
+	cpgimag(data->values, data->nx, data->ny, 1, data->nx, 1, data->ny, 0, 1, tr);
 
 	strcpy(message,"Picks: ");
-	cpgsci(2);
+	cpgsci(0);
 	for(i=0; i < np; i++) {
 		if (i == cp) {
 			cpgpt(p[i]->n, p[i]->x, p[i]->y,2);
@@ -242,7 +288,7 @@ void showhelp() {
 
 	cpgsch(0.75);
 
-	cpgsvp(0.45, 0.95, 0.05, 0.55);
+	cpgsvp(0.35, 0.95, 0.05, 0.55);
 	cpgswin(0.0,1.0,0.0,1.0);
 	cpgrect(0.0,1.0,0.0,1.0);
 	cpgsci(0);
@@ -269,6 +315,7 @@ void showhelp() {
 	p -= 1.0; cpgmtxt("T", p, py, 0.0, ". - Next PickSet / Add PickSet");
 	p -= 1.0; cpgmtxt("T", p, py, 0.0, "d - Auto Delete pick points by region");
 	p -= 1.0; cpgmtxt("T", p, py, 0.0, "a - Auto Add pick points by region (left mouse)");
+	p -= 1.0; cpgmtxt("T", p, py, 0.0, "z - Manual Pick (y also works - german keyboard)");
 
 
 	p -= 2.0; cpgmtxt("T", p, py, 0.0, "  --  Any Key to close this help message !");
@@ -322,8 +369,7 @@ void boxpick(GRID *data, PICKS *p, AREA *box) {
 }
 
 void boxunpick(GRID *data, PICKS *p, AREA *box) {
-	int is,js,ie,je;
-	int amount, moveamount;
+	int is,js,ie,je, i;
 	int from, to;
 
 	/*
@@ -333,56 +379,36 @@ void boxunpick(GRID *data, PICKS *p, AREA *box) {
 	xy2ij(data,box->xmax, box->ymax, &ie, &je, 1);
 
 	/*
-	 * Find cut start in pick vector index
+	 * Multiple cut based on other index to allow nice D
 	 */
-	for(from = 0; from < p->n; from++)
-		if (p->i[from] >= is) break;
-
-	/*
-	 * Find cut end in pick vector index
-	 */
-	for(to=from; to < p->n; to++)
-		if (p->i[to] > ie) break;
-	to--;
-
-	/*
-	 * Compute cut amount
-	 */
-	amount = to - from + 1;
-
-	/*
-	 * Comput move amount
-	 */
-	moveamount = p->n - to - 1;
-
-	/*
-	 * Cut if necessary
-	 */
-	if (to >= from) {
+	to = -1;
+	for(i = p->n - 1; i >= 0; i--) {
 
 		/*
-		 * Move if necessary
+		 * Check cut-end
 		 */
-		if (moveamount > 0) {
-			memmove(&p->i[from], &p->i[to+1], sizeof(int) * (moveamount));
-			memmove(&p->j[from], &p->j[to+1], sizeof(int) * (moveamount));
-			memmove(&p->x[from], &p->x[to+1], sizeof(float) * (moveamount));
-			memmove(&p->y[from], &p->y[to+1], sizeof(float) * (moveamount));
+		if ((p->i[i] >= is && p->i[i] <= ie) && (p->j[i] >= js && p->j[i] <= je)) {
+			to = i;
+
+			/*
+			 * Search for the cut-start
+			 */
+			for(from = i; from >= 0; from--) {
+				if (p->i[from] >= is && (p->j[from] >= js && p->j[from] <= je)) continue;
+				break;
+			}
+			from ++;
+
+			/*
+			 * Cut
+			 */
+			pickdel(p, from, to);
+
+			/*
+			 * We reset to re-start process since index changed
+			 */
+			i = p->n;
 		}
-
-		/*
-		 * Real pick vectors cut
-		 */
-		p->n = p->n - amount;
-		p->x = realloc(p->x, sizeof(float) * p->n);
-		p->y = realloc(p->y, sizeof(float) * p->n);
-		p->i = realloc(p->i, sizeof(int) * p->n);
-		p->j = realloc(p->j, sizeof(int) * p->n);
-
-		/*
-		 * Do we want report ?
-		 */
-		if (DEBUG) fprintf(stderr,"Cutted pick from %d to %d amount %d rested %d movedamount %d\n",from, to, amount, p->n, moveamount);
 	}
 
 	return;
@@ -457,6 +483,32 @@ int control(char *gridfilename, char *pickfilename) {
 	panearea.xmax = data.xmax + data.dx;
 	panearea.ymin = data.ymin - data.dy;
 	panearea.ymax = data.ymax + data.dy;
+
+
+	/*
+	 * Color table Dump
+	 */
+	int cs, ce;
+	int i;
+	float r,g,b, nr, ng, nb;
+
+	cpgqcir(&cs, &ce);
+	if (DEBUG) fprintf(stderr,"cs: %d ce: %d\n",cs,ce);
+
+	cpgscir(cs, cs + n_colortable - 1);
+	cpgqcir(&cs, &ce);
+	if (DEBUG) fprintf(stderr,"cs: %d ce: %d\n",cs,ce);
+
+	for(i = cs; i <= ce; i++) {
+
+		nr = colortable[i-cs][0] / 255.0;
+		ng = colortable[i-cs][1] / 255.0;
+		nb = colortable[i-cs][2] / 255.0;
+
+		cpgqcr(i, &r, &g, &b);
+		if (DEBUG) fprintf(stderr," %d %.2f %.2f %.2f -> %.2f %.2f %.2f\n", i, r, g, b, nr, ng, nb);
+		cpgscr(i, nr, ng, nb);
+	}
 
 	while (ch != 'Q') {
 		/*
@@ -588,6 +640,13 @@ int control(char *gridfilename, char *pickfilename) {
 			break;
 		}
 
+		case 'Z':
+		case 'Y': {
+			int is, js;
+			xy2ij(&data, ax, ay, &is, &js, 1);
+			pickadd(picks[cp], ax, ay, is, js, GOBYROW);
+			break;
+		}
 		/*
 		 * Quit, save, help
 		 */
