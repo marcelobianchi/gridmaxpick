@@ -1,10 +1,10 @@
 #!/bin/bash 
 
 # If gmt.h file is in /usr/include/gmt/gmt.h add here /usr/include
-GMT="A"
+GMT="/opt/local/lib/gmt4/include"
 
 # The folder where libgmt.so or in the mac, the dynamic file.
-GMTLIB=""
+GMTLIB="/opt/local/lib/gmt4/lib"
 
 [ -z "$GMT" ] && echo "EDIT ME " && exit
 

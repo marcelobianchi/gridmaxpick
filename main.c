@@ -6,7 +6,7 @@
 #include "colortable.h"
 
 #ifdef USEGMTGRD
-#include <gmt/gmt.h>
+#include <gmt.h>
 #endif
 
 #define DEBUG   1    // Enable debuging
