@@ -5,15 +5,18 @@
 #include "interaction.h"
 #include "colortable.h"
 
-#ifdef USEGMTGRD
 #include <gmt.h>
-#endif
+#include "gmt_parse_z_io.h"
 
-#define DEBUG   1    // Enable debuging
+#define DEBUG   0    // Enable debuging
 #define MAXNP  16    // Max number of pickset allowed
 #define NONE    0    // Picking mode (in the future), NONE
 #define GOBYROW 1    // pick ROW wise
 #define GOBYCOL 1    // pick COL wise
+
+struct GRD2XYZ_CTRL {
+	struct Z Z;
+};
 
 typedef struct area {
 	float xmin, xmax, ymin,ymax;
@@ -49,6 +52,18 @@ typedef struct workpackage {
 /*
  * General support methods
  */
+void *New_grd2xyz_Ctrl () {     /* Allocate and initialize a new control structure */
+	struct GRD2XYZ_CTRL *C;
+	C = (struct GRD2XYZ_CTRL *) GMT_memory (VNULL, (size_t)1, sizeof (struct GRD2XYZ_CTRL), "New_grd2xyz_Ctrl");
+
+	/* Initialize values whose defaults are not 0/FALSE/NULL */
+
+	C->Z.type = 'a';
+	C->Z.format[0] = 'T';   C->Z.format[1] = 'L';
+
+	return ((void *)C);
+}
+
 void status(char *message) {
 	cpgsci(2);
 	cpgsch(0.75);
@@ -227,11 +242,14 @@ float *loadASCII(char *filename, float *xmin, float *xmax, float *dx, int *nx, f
 	return data;
 }
 
-#ifdef USEGMTGRD
 float *loadGRD(char *filename, float *xmin, float *xmax, float *dx, int *nx, float *ymin, float *ymax, float *dy, int *ny) {
 	struct GRD_HEADER grd;
-	float *a = NULL;
-	GMT_LONG nm;
+	float *a = NULL, *a_sorted = NULL;
+
+	GMT_LONG nm, i, gmt_ij, ij;
+
+	struct GRD2XYZ_CTRL *Ctrl = NULL;
+	struct GMT_Z_IO io;
 
 	if (DEBUG) fprintf(stderr,"Loading (GMT/GRD) file: %s\n", filename);
 
@@ -253,12 +271,24 @@ float *loadGRD(char *filename, float *xmin, float *xmax, float *dx, int *nx, flo
 
 	nm = GMT_get_nm (grd.nx, grd.ny);
 	a = (float *) malloc (sizeof(float) * nm);
+	a_sorted = (float *) malloc (sizeof(float) * nm);
 	GMT_read_grd (filename, &grd, a, 0.0, 0.0, 0.0, 0.0, GMT_pad, FALSE);
 	if (DEBUG) fprintf(stderr,"Total of %ld data points\n", nm);
 
-	return a;
+	Ctrl = (struct GRD2XYZ_CTRL *)New_grd2xyz_Ctrl ();
+
+	GMT_parse_z_io ("BLa", &Ctrl->Z);
+	GMT_init_z_io (Ctrl->Z.format, Ctrl->Z.repeat, Ctrl->Z.swab, Ctrl->Z.skip, Ctrl->Z.type, &io);
+	GMT_set_z_io (&io, &grd);
+	for (i=0, ij = 0; ij < io.n_expected; ij++) {
+		(io.get_gmt_ij) (&io, ij, &gmt_ij);
+		a_sorted[i++] = a[gmt_ij];
+	}
+
+	if (a != NULL) free(a);
+
+	return a_sorted;
 }
-#endif
 
 int loadPKFILE(WORKPACKAGE *wp) {
 	int natt;               // Number of readen attributes
@@ -269,7 +299,7 @@ int loadPKFILE(WORKPACKAGE *wp) {
 	 *
 	 * > <sta> <stb> <Distance>
 	 * > <seq> <n-points> <U|S>
-	 * X Y I J Period Frequency <sta> <stb> <Distance>
+	 * X Y I J Frequency Period <sta> <stb> <Distance>
 	 * > <seq> <n-points> <U|S>
 	 *
 	 */
@@ -418,11 +448,13 @@ int savePKFILE(WORKPACKAGE *wp) {
 	for(i = 0; i < wp->np; i++) {
 		fprintf(sai, "> %d %d %c\n", i, wp->picks[i]->n, (wp->cp == i) ? 'S' : 'U');
 		for(j = 0; j < wp->picks[i]->n; j++)
-			fprintf(sai, "%f %f %d %d 0 0 %s %s %f\n"
+			fprintf(sai, "%f %f %d %d %f %f %s %s %f\n"
 					,wp->picks[i]->x[j]
 					,wp->picks[i]->y[j]
 					,wp->picks[i]->i[j]
 					,wp->picks[i]->j[j]
+					,pow(10,wp->picks[i]->x[j])
+					,1.0/pow(10,wp->picks[i]->x[j])
 					,wp->sta
 					,wp->stb
 					,wp->distance);
@@ -498,7 +530,13 @@ inline int xy2ij(GRID *g, float x, float y, int *i, int *j, int limit) {
 
 void plot(GRID *data, WORKPACKAGE *wp, AREA *pane) {
 	int i;
-	float tr[6] = { data->xmin - data->dx, data->dx, 0, data->ymin - data->dy, 0, data->dy };
+	float tr[6] = { data->xmin - data->dx,
+					data->dx,
+					0,
+					data->ymin - data->dy,
+					0,
+					data->dy
+				  };
 	char message[1024];
 
 	cpgeras();
@@ -680,11 +718,8 @@ int control(WORKPACKAGE *wp) {
 	/*
 	 * Load grid file
 	 */
-#ifdef USEGMTGRD
 	data.values = loadGRD(wp->gridfilename, &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
-#else
-	data.values = loadASCII(wp->gridfilename, &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
-#endif
+	// data.values = loadASCII(wp->gridfilename, &data.xmin, &data.xmax, &data.dx, &data.nx, &data.ymin, &data.ymax, &data.dy, &data.ny);
 
 	/*
 	 * Init
@@ -980,12 +1015,12 @@ int main(int argc, char **argv) {
 		fprintf(stderr,"\t-sa,\n\t-sb,\n\t-d are only needed if option -p is not given, or is an non-existing file.\n\n");
 		return 1;
 	}
-#ifdef USEGMTGRD
+
 	/*
 	 * Initialize GMT library for use
 	 */
 	argc = (int)GMT_begin (argc, argv);
-#endif
+
 
 	/*
 	 * Init code
