@@ -16,10 +16,15 @@ GMTLIB="/opt/local/lib/gmt4/lib"
 
 # Compile
 #
-gcc -c -m64 -O2 -W -DUSEGMTGRD -I. -I${GMT} -I/opt/local/include -o main.o main.c
-gcc -c -m64 -O2 -W -DUSEGMTGRD -I. -I${GMT} -I/opt/local/include -o interaction.o interaction.c
-gcc -o testegrid main.o interaction.o  -lcpgplot  -L/opt/local/lib/ -L${GMTLIB} -lm -lgmt
+#gcc -c -m64 -O2 -W -DUSEGMTGRD -I. -I${GMT} -I/opt/local/include -o main.o main.c
+#gcc -c -m64 -O2 -W -DUSEGMTGRD -I. -I${GMT} -I/opt/local/include -o interaction.o interaction.c
+#gcc -o testegrid main.o interaction.o  -lcpgplot  -L/opt/local/lib/ -L${GMTLIB} -lm -lgmt
 
+gcc -DUSEGMTGRD -I. -I/opt/local/lib/gmt4/include -I/opt/local/include -I/opt/local/share/pgplot   -c -o main.o main.c
+
+gcc -DUSEGMTGRD -I. -I/opt/local/lib/gmt4/include -I/opt/local/include -I/opt/local/share/pgplot   -c -o interaction.o interaction.c
+
+gcc -o testegrid interaction.o main.o /opt/local/lib/gmt4/lib/libgmt.a -lcpgplot -L/opt/local/lib/ -lm -lgdal -lnetcdf
 # VARIABLES
 #
 export LD_LIBRARY_PATH=/opt/local/lib:/opt/local/lib/gmt4/lib:$LD_LIBRARY_PATH
